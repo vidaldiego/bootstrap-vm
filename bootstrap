@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Place this script on your VM templates at /usr/local/bin/bootstrap
+# After cloning, just run: bootstrap
+set -euo pipefail
+curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/bootstrap-vm.sh -o /tmp/bootstrap-vm.sh
+chmod +x /tmp/bootstrap-vm.sh
+exec /tmp/bootstrap-vm.sh "$@"
