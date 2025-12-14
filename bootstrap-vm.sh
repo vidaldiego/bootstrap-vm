@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.0.2"
+readonly SCRIPT_VERSION="2.0.3"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
@@ -884,8 +884,12 @@ interactive_phase() {
   # Gather user input
   local new_hostname=""
   while true; do
-    read -r -p "New hostname (empty to keep '$(hostname)'): " new_hostname
-    if [[ -z "$new_hostname" ]] || validate_hostname "$new_hostname"; then
+    read -r -p "New hostname: " new_hostname
+    if [[ -z "$new_hostname" ]]; then
+      warn "Hostname is required"
+      continue
+    fi
+    if validate_hostname "$new_hostname"; then
       break
     fi
     warn "Invalid hostname format. Use letters, numbers, hyphens (max 63 chars, no leading/trailing hyphen)"
