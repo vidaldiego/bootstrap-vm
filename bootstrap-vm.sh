@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.0.0"
+readonly SCRIPT_VERSION="2.0.1"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
@@ -32,7 +32,6 @@ readonly LOGFILE="${BOOT_LOGFILE:-/var/log/bootstrap-${TIMESTAMP}.log}"
 DRY_RUN="${DRY_RUN:-no}"
 FORCE="${FORCE:-no}"
 FORCE_RERUN="${FORCE_RERUN:-no}"
-NETPLAN_TIMEOUT="${NETPLAN_TIMEOUT:-120}"
 
 # Two-phase execution: "interactive" (collect input) or "apply" (execute as root)
 BOOTSTRAP_PHASE="${BOOTSTRAP_PHASE:-interactive}"
@@ -171,7 +170,6 @@ elevate_and_apply() {
     DRY_RUN="${DRY_RUN}" \
     FORCE="${FORCE}" \
     FORCE_RERUN="${FORCE_RERUN}" \
-    NETPLAN_TIMEOUT="${NETPLAN_TIMEOUT}" \
     BOOT_TIMESTAMP="${TIMESTAMP}" \
     BOOT_LOGFILE="${LOGFILE}" \
     BOOT_NEW_HOSTNAME="${BOOT_NEW_HOSTNAME:-}" \
@@ -598,35 +596,23 @@ EOF
     printf '  %s[dry-run]%s Would create %s\n' "${DIM}" "${RESET}" "${netplan_file}"
   fi
 
-  # Apply with rollback support
-  # netplan try is interactive and requires TTY; fallback to apply + manual rollback
+  # Validate config without applying (safe for SSH sessions)
+  # Config will be applied on next reboot
   if [[ "${DRY_RUN}" != "yes" ]]; then
-    if [[ -t 0 && -t 1 ]]; then
-      info "Applying netplan (${NETPLAN_TIMEOUT}s timeout with auto-rollback)..."
-      if netplan try --timeout "${NETPLAN_TIMEOUT}"; then
-        success "Network configuration applied"
-      else
-        warn "netplan try failed or was reverted, restoring backup..."
-        cp -a "${backup_dir}"/* "${netplan_dir}/" 2>/dev/null || true
-        rm -f "${netplan_file}"
-        netplan apply || true
-        die "Network configuration failed and was rolled back"
-      fi
+    info "Validating netplan configuration..."
+    if netplan generate; then
+      success "Network configuration validated"
+      info "Config saved to ${DIM}${netplan_file}${RESET}"
+      info "Network changes will apply on next reboot"
+      BOOT_REBOOT_REQUIRED="yes"
     else
-      warn "No TTY detected; using netplan apply (no interactive rollback)"
-      info "If you lose connectivity, restore from: ${backup_dir}"
-      if netplan apply; then
-        success "Network configuration applied"
-      else
-        warn "netplan apply failed, restoring backup..."
-        cp -a "${backup_dir}"/* "${netplan_dir}/" 2>/dev/null || true
-        rm -f "${netplan_file}"
-        netplan apply || true
-        die "Network configuration failed and was rolled back"
-      fi
+      warn "Netplan validation failed, restoring backup..."
+      cp -a "${backup_dir}"/* "${netplan_dir}/" 2>/dev/null || true
+      rm -f "${netplan_file}"
+      die "Network configuration invalid and was rolled back"
     fi
   else
-    printf '  %s[dry-run]%s Would run: netplan try --timeout %s\n' "${DIM}" "${RESET}" "${NETPLAN_TIMEOUT}"
+    printf '  %s[dry-run]%s Would run: netplan generate (validate only)\n' "${DIM}" "${RESET}"
   fi
 }
 

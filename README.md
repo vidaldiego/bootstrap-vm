@@ -32,7 +32,7 @@ bootstrap
 ## Features
 
 - **Hostname configuration** - Set a new hostname with proper `/etc/hosts` update
-- **Static IP configuration** - Generate netplan config with automatic rollback on failure
+- **Static IP configuration** - Generate and validate netplan config (applied on reboot)
 - **SSH host key regeneration** - Generate new unique host keys
 - **Machine-ID reset** - Ensure unique machine identity for DHCP, logging, etc.
 - **Root filesystem expansion** - Supports both regular partitions and LVM
@@ -65,7 +65,6 @@ The script will prompt for:
 | `DRY_RUN` | `no` | Set to `yes` to preview changes without applying |
 | `FORCE` | `no` | Set to `yes` to skip confirmation prompts |
 | `FORCE_RERUN` | `no` | Set to `yes` to bypass previous-run detection |
-| `NETPLAN_TIMEOUT` | `120` | Seconds to wait for netplan confirmation |
 
 ### Examples
 
@@ -87,7 +86,7 @@ FORCE_RERUN=yes ./bootstrap-vm.sh
 3. **Machine-ID** - Truncates `/etc/machine-id` (regenerates on next boot)
 4. **Journal logs** - Rotates and vacuums systemd journal
 5. **Hostname** - Updates hostname and `/etc/hosts`
-6. **Network** - Creates netplan config at `/etc/netplan/99-bootstrap-static.yaml`
+6. **Network** - Validates and saves netplan config (applied on reboot)
 7. **Disk** - Expands partition and filesystem to use available space
 8. **Sysprep** - Cleans history, logs, temp files, apt cache
 9. **Reboot** - Applies all changes with a fresh boot
