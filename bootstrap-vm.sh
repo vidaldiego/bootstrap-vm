@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.0.1"
+readonly SCRIPT_VERSION="2.0.2"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
@@ -883,10 +883,13 @@ interactive_phase() {
 
   # Gather user input
   local new_hostname=""
-  read -r -p "New hostname (empty to keep '$(hostname)'): " new_hostname
-  if [[ -n "$new_hostname" ]] && ! validate_hostname "$new_hostname"; then
-    die "Invalid hostname format: ${new_hostname}"
-  fi
+  while true; do
+    read -r -p "New hostname (empty to keep '$(hostname)'): " new_hostname
+    if [[ -z "$new_hostname" ]] || validate_hostname "$new_hostname"; then
+      break
+    fi
+    warn "Invalid hostname format. Use letters, numbers, hyphens (max 63 chars, no leading/trailing hyphen)"
+  done
   export BOOT_NEW_HOSTNAME="${new_hostname}"
 
   local change_ip="no"
@@ -902,32 +905,47 @@ interactive_phase() {
     current_dns="$(detect_current_dns "$primary_if")"
 
     # Static IP prompt with current as default
-    if [[ -n "$current_ip" ]]; then
-      read -r -p "Static IP (CIDR) [${current_ip}]: " static_ip
-      static_ip="${static_ip:-$current_ip}"
-    else
-      read -r -p "Static IP (CIDR format, e.g. 10.10.30.50/24): " static_ip
-    fi
-    validate_cidr "$static_ip" || die "Invalid CIDR format: ${static_ip}"
+    while true; do
+      if [[ -n "$current_ip" ]]; then
+        read -r -p "Static IP (CIDR) [${current_ip}]: " static_ip
+        static_ip="${static_ip:-$current_ip}"
+      else
+        read -r -p "Static IP (CIDR format, e.g. 10.10.30.50/24): " static_ip
+      fi
+      if validate_cidr "$static_ip"; then
+        break
+      fi
+      warn "Invalid CIDR format. Use format like 10.10.30.50/24"
+    done
 
     # Gateway prompt with current as default
-    if [[ -n "$current_gw" ]]; then
-      read -r -p "Gateway [${current_gw}]: " gateway
-      gateway="${gateway:-$current_gw}"
-    else
-      read -r -p "Gateway (e.g. 10.10.30.1): " gateway
-    fi
-    validate_ip "$gateway" || die "Invalid gateway IP: ${gateway}"
+    while true; do
+      if [[ -n "$current_gw" ]]; then
+        read -r -p "Gateway [${current_gw}]: " gateway
+        gateway="${gateway:-$current_gw}"
+      else
+        read -r -p "Gateway (e.g. 10.10.30.1): " gateway
+      fi
+      if validate_ip "$gateway"; then
+        break
+      fi
+      warn "Invalid gateway IP. Use format like 10.10.30.1"
+    done
 
     # DNS prompt with current as default
-    if [[ -n "$current_dns" ]]; then
-      read -r -p "DNS servers (comma-separated) [${current_dns}]: " dns_servers
-      dns_servers="${dns_servers:-$current_dns}"
-    else
-      read -r -p "DNS servers (comma-separated, empty to skip): " dns_servers
-    fi
-    dns_servers="${dns_servers// /}"
-    validate_dns_list "$dns_servers" || die "Invalid DNS server list: ${dns_servers}"
+    while true; do
+      if [[ -n "$current_dns" ]]; then
+        read -r -p "DNS servers (comma-separated) [${current_dns}]: " dns_servers
+        dns_servers="${dns_servers:-$current_dns}"
+      else
+        read -r -p "DNS servers (comma-separated, empty to skip): " dns_servers
+      fi
+      dns_servers="${dns_servers// /}"
+      if validate_dns_list "$dns_servers"; then
+        break
+      fi
+      warn "Invalid DNS server list. Use comma-separated IPs like 8.8.8.8,1.1.1.1"
+    done
   fi
   export BOOT_CHANGE_IP="${change_ip}"
   export BOOT_STATIC_IP="${static_ip}"
