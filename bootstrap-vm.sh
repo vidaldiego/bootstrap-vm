@@ -16,11 +16,14 @@ set -Eeuo pipefail
 #   - Previous run detection (use FORCE_RERUN=yes to override)
 #   - LVM root filesystem expansion
 #   - Sysprep cleanup (with /tmp self-deletion protection)
+#   - Unattended-upgrades management (disable or set window)
+#   - IP shorthand input (.25 for last octet change)
+#   - IP availability check via ping
 # ============================================================
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.0.3"
+readonly SCRIPT_VERSION="2.1.0"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
@@ -182,6 +185,8 @@ elevate_and_apply() {
     BOOT_CLEAN_CREDS="${BOOT_CLEAN_CREDS:-no}" \
     BOOT_EXPAND_DISK="${BOOT_EXPAND_DISK:-no}" \
     BOOT_SYSPREP="${BOOT_SYSPREP:-no}" \
+    BOOT_UNATTENDED_ACTION="${BOOT_UNATTENDED_ACTION:-none}" \
+    BOOT_UNATTENDED_WINDOW="${BOOT_UNATTENDED_WINDOW:-}" \
     bash "$0"
 }
 
@@ -254,6 +259,87 @@ validate_dns_list() {
 validate_hostname() {
   local hostname="$1"
   [[ "$hostname" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$ ]]
+}
+
+# Expand IP shorthand notation relative to current IP
+# Supports:
+#   - Full CIDR: "10.10.30.50/24" -> unchanged
+#   - IP only: "10.10.30.50" -> adds subnet from current_ip
+#   - Last octet: ".50" -> replaces last octet, keeps subnet
+#   - Last two octets: ".30.50" -> replaces last two octets, keeps subnet
+expand_ip_input() {
+  local input="$1"
+  local current_ip="$2"  # Current IP in CIDR format (e.g., 172.16.220.217/24)
+
+  # Extract parts from current IP
+  local current_addr="${current_ip%/*}"
+  local current_mask="${current_ip#*/}"
+
+  # If input already has subnet, validate and return as-is
+  if [[ "$input" == */* ]]; then
+    echo "$input"
+    return 0
+  fi
+
+  # If input starts with ".", it's a shorthand
+  if [[ "$input" == .* ]]; then
+    # Count the dots to determine how many octets to replace
+    local dot_count="${input//[^.]/}"
+    dot_count="${#dot_count}"
+
+    local IFS='.'
+    local -a current_octets
+    read -r -a current_octets <<< "$current_addr"
+
+    # Remove leading dot and split
+    local shorthand="${input#.}"
+    local -a new_octets
+    read -r -a new_octets <<< "$shorthand"
+
+    case "$dot_count" in
+      1)
+        # .50 -> replace last octet
+        echo "${current_octets[0]}.${current_octets[1]}.${current_octets[2]}.${new_octets[0]}/${current_mask}"
+        ;;
+      2)
+        # .30.50 -> replace last two octets
+        echo "${current_octets[0]}.${current_octets[1]}.${new_octets[0]}.${new_octets[1]}/${current_mask}"
+        ;;
+      3)
+        # .10.30.50 -> replace last three octets
+        echo "${current_octets[0]}.${new_octets[0]}.${new_octets[1]}.${new_octets[2]}/${current_mask}"
+        ;;
+      *)
+        # Invalid shorthand
+        echo ""
+        return 1
+        ;;
+    esac
+    return 0
+  fi
+
+  # Full IP without subnet - add current subnet
+  if validate_ip "$input"; then
+    echo "${input}/${current_mask}"
+    return 0
+  fi
+
+  # Invalid input
+  echo ""
+  return 1
+}
+
+# Check if an IP is reachable (already in use)
+check_ip_available() {
+  local ip="$1"
+  local addr="${ip%/*}"
+
+  # Quick ping with 1 second timeout, 2 attempts
+  if ping -c 2 -W 1 "$addr" &>/dev/null; then
+    return 1  # IP responds, NOT available
+  else
+    return 0  # IP doesn't respond, available (or unreachable)
+  fi
 }
 
 # ============================================================
@@ -517,6 +603,77 @@ clean_system_state() {
   run rm -f /var/lib/systemd/random-seed 2>/dev/null || true
 
   success "System state cleaned"
+}
+
+configure_unattended_upgrades() {
+  local action="$1"
+  local window="${2:-}"
+
+  step "Configuring unattended-upgrades"
+
+  local apt_conf="/etc/apt/apt.conf.d/20auto-upgrades"
+  local unattended_conf="/etc/apt/apt.conf.d/50unattended-upgrades"
+
+  if [[ "$action" == "disable" ]]; then
+    info "Disabling automatic updates..."
+    if [[ "${DRY_RUN}" != "yes" ]]; then
+      # Disable automatic updates
+      cat > "${apt_conf}" <<'EOF'
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::AutocleanInterval "0";
+EOF
+      # Also disable the timers if they exist
+      systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+      systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+    else
+      printf '  %s[dry-run]%s Would disable unattended-upgrades\n' "${DIM}" "${RESET}"
+    fi
+    success "Automatic updates disabled"
+
+  elif [[ "$action" == "window" && -n "$window" ]]; then
+    info "Setting maintenance window to: ${window}"
+
+    # Ensure unattended-upgrades is installed
+    run apt-get -y install unattended-upgrades || warn "Failed to install unattended-upgrades"
+
+    if [[ "${DRY_RUN}" != "yes" ]]; then
+      # Enable automatic updates
+      cat > "${apt_conf}" <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+      # Configure the maintenance window
+      # Create or update the configuration
+      if [[ -f "${unattended_conf}" ]]; then
+        # Update existing config - set OnlyOnACPower and add time window
+        if grep -q '^//Unattended-Upgrade::OnlyOnACPower' "${unattended_conf}"; then
+          sed -i 's|^//Unattended-Upgrade::OnlyOnACPower.*|Unattended-Upgrade::OnlyOnACPower "false";|' "${unattended_conf}"
+        elif ! grep -q '^Unattended-Upgrade::OnlyOnACPower' "${unattended_conf}"; then
+          echo 'Unattended-Upgrade::OnlyOnACPower "false";' >> "${unattended_conf}"
+        fi
+      fi
+
+      # Configure the systemd timer to run at the specified time
+      local timer_override_dir="/etc/systemd/system/apt-daily-upgrade.timer.d"
+      mkdir -p "${timer_override_dir}"
+      cat > "${timer_override_dir}/override.conf" <<EOF
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* ${window}
+RandomizedDelaySec=0
+EOF
+      systemctl daemon-reload
+      systemctl enable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+    else
+      printf '  %s[dry-run]%s Would set maintenance window to %s\n' "${DIM}" "${RESET}" "${window}"
+    fi
+    success "Maintenance window configured: ${window}"
+  fi
 }
 
 set_hostname() {
@@ -813,6 +970,8 @@ print_summary() {
   local clean_creds="$9"
   local virt="${10}"
   local sysprep="${11}"
+  local unattended_action="${12:-none}"
+  local unattended_window="${13:-}"
 
   header "Bootstrap Summary"
 
@@ -843,6 +1002,11 @@ print_summary() {
   fi
 
   [[ "$expand_disk" == "yes" ]] && printf "    %s✓%s Expand root filesystem\n" "${GREEN}" "${RESET}"
+  if [[ "$unattended_action" == "disable" ]]; then
+    printf "    %s✓%s Disable automatic updates\n" "${GREEN}" "${RESET}"
+  elif [[ "$unattended_action" == "window" ]]; then
+    printf "    %s✓%s Set updates window: %s\n" "${GREEN}" "${RESET}" "${unattended_window}"
+  fi
   [[ "$sysprep" == "yes" ]] && printf "    %s✓%s Clean system state (sysprep)\n" "${GREEN}" "${RESET}"
 
   printf "    %s✓%s Reboot system\n" "${GREEN}" "${RESET}"
@@ -908,18 +1072,45 @@ interactive_phase() {
     current_gw="$(detect_current_gateway)"
     current_dns="$(detect_current_dns "$primary_if")"
 
-    # Static IP prompt with current as default
+    # Static IP prompt with current as default and shorthand support
     while true; do
       if [[ -n "$current_ip" ]]; then
-        read -r -p "Static IP (CIDR) [${current_ip}]: " static_ip
-        static_ip="${static_ip:-$current_ip}"
+        info "Shortcuts: .25 = change last octet, .30.25 = change last two, or full IP"
+        read -r -p "Static IP [${current_ip}]: " static_ip
+        if [[ -z "$static_ip" ]]; then
+          static_ip="$current_ip"
+        else
+          # Expand shorthand notation
+          local expanded
+          expanded="$(expand_ip_input "$static_ip" "$current_ip")"
+          if [[ -n "$expanded" ]]; then
+            static_ip="$expanded"
+          fi
+        fi
       else
         read -r -p "Static IP (CIDR format, e.g. 10.10.30.50/24): " static_ip
       fi
-      if validate_cidr "$static_ip"; then
-        break
+
+      if ! validate_cidr "$static_ip"; then
+        warn "Invalid IP format. Use: full CIDR (10.10.30.50/24), IP only (10.10.30.50), or shorthand (.50)"
+        continue
       fi
-      warn "Invalid CIDR format. Use format like 10.10.30.50/24"
+
+      # Check if IP is already in use (skip if it's the current IP)
+      local new_addr="${static_ip%/*}"
+      local current_addr="${current_ip%/*}"
+      if [[ "$new_addr" != "$current_addr" ]]; then
+        info "Checking if ${new_addr} is available..."
+        if ! check_ip_available "$static_ip"; then
+          printf '  %s⚠%s  %sWarning: %s responds to ping (may be in use)%s\n' "${YELLOW}" "${RESET}" "${BOLD_YELLOW}" "${new_addr}" "${RESET}"
+          if ! ask_yes_no "Continue anyway?" "no"; then
+            continue
+          fi
+        else
+          success "IP ${new_addr} appears to be available"
+        fi
+      fi
+      break
     done
 
     # Gateway prompt with current as default
@@ -994,6 +1185,34 @@ interactive_phase() {
   fi
   export BOOT_EXPAND_DISK="${expand_disk}"
 
+  # Unattended upgrades configuration
+  local unattended_action="none"
+  local unattended_window=""
+  if ask_yes_no "Disable Ubuntu unattended (automatic) updates?" "no"; then
+    unattended_action="disable"
+  else
+    if ask_yes_no "Change the automatic updates maintenance window?" "no"; then
+      unattended_action="window"
+      # Show current timer schedule
+      local current_schedule=""
+      if systemctl is-active apt-daily-upgrade.timer &>/dev/null; then
+        current_schedule="$(systemctl show apt-daily-upgrade.timer --property=TimersCalendar 2>/dev/null | cut -d= -f2 | head -1 || true)"
+      fi
+      if [[ -n "$current_schedule" ]]; then
+        info "Current schedule: ${current_schedule}"
+      fi
+      while true; do
+        read -r -p "Maintenance window (24h format, e.g., 04:00 for 4 AM): " unattended_window
+        if [[ "$unattended_window" =~ ^[0-2]?[0-9]:[0-5][0-9]$ ]]; then
+          break
+        fi
+        warn "Invalid time format. Use HH:MM (24-hour format), e.g., 04:00 or 23:30"
+      done
+    fi
+  fi
+  export BOOT_UNATTENDED_ACTION="${unattended_action}"
+  export BOOT_UNATTENDED_WINDOW="${unattended_window}"
+
   local sysprep="no"
   if ask_yes_no "Clean system state (sysprep: history, logs, temp files)?" "no"; then
     sysprep="yes"
@@ -1012,7 +1231,9 @@ interactive_phase() {
     "$BOOT_EXPAND_DISK" \
     "$BOOT_CLEAN_CREDS" \
     "$virt" \
-    "$BOOT_SYSPREP"
+    "$BOOT_SYSPREP" \
+    "$BOOT_UNATTENDED_ACTION" \
+    "$BOOT_UNATTENDED_WINDOW"
 
   ask_yes_no "Proceed with these changes?" "no" || die "Aborted by user"
 
@@ -1054,6 +1275,9 @@ apply_phase() {
     "${BOOT_GATEWAY}" \
     "${BOOT_DNS_SERVERS}"
   [[ "${BOOT_EXPAND_DISK}" == "yes" ]] && expand_root_filesystem
+  [[ "${BOOT_UNATTENDED_ACTION}" != "none" ]] && configure_unattended_upgrades \
+    "${BOOT_UNATTENDED_ACTION}" \
+    "${BOOT_UNATTENDED_WINDOW}"
   [[ "${BOOT_SYSPREP}" == "yes" ]] && clean_system_state
 
   # Print completion report
