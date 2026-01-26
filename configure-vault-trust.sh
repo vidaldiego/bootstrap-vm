@@ -157,7 +157,12 @@ main() {
 
   if [[ "$ssh_ok" == true ]]; then
     echo "You can now SSH using certificates:"
-    echo "  ${CYAN}znvault ssh-ca sign --file ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub${RESET}"
+    echo ""
+    echo "  ${BOLD}Quick connect (recommended):${RESET}"
+    echo "  ${CYAN}znvault ssh connect sysadmin@$(hostname)${RESET}"
+    echo ""
+    echo "  ${BOLD}Manual signing:${RESET}"
+    echo "  ${CYAN}znvault ssh cert sign ~/.ssh/id_ed25519.pub -o ~/.ssh/id_ed25519-cert.pub${RESET}"
     echo "  ${CYAN}ssh sysadmin@$(hostname)${RESET}"
     echo ""
   fi
