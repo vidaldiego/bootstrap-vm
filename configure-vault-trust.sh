@@ -15,7 +15,7 @@ set -Eeuo pipefail
 # ============================================================
 
 readonly VAULT_URL="${VAULT_URL:-https://vault.zincapp.com}"
-readonly VAULT_TENANT="${VAULT_TENANT:-root}"
+readonly VAULT_TENANT="${VAULT_TENANT:-zincapp}"
 
 # Colors
 if [[ -t 1 ]]; then

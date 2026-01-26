@@ -35,7 +35,7 @@ readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
 # ZnVault configuration
 readonly VAULT_URL="${VAULT_URL:-https://vault.zincapp.com}"
-readonly VAULT_TENANT="${VAULT_TENANT:-root}"
+readonly VAULT_TENANT="${VAULT_TENANT:-zincapp}"
 
 # Preserve timestamp/logfile across phases
 readonly TIMESTAMP="${BOOT_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
