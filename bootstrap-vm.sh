@@ -19,13 +19,23 @@ set -Eeuo pipefail
 #   - Unattended-upgrades management (disable or set window)
 #   - IP shorthand input (.25 for last octet change)
 #   - IP availability check via ping
+#   - ZnVault SSH CA integration (certificate-based SSH auth)
+#   - ZnVault PKI CA trust (add root CA to system store)
+#
+# ZnVault Configuration:
+#   VAULT_URL    - Vault server URL (default: https://vault.zincapp.com)
+#   VAULT_TENANT - Tenant for SSH CA (default: root)
 # ============================================================
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.1.0"
+readonly SCRIPT_VERSION="2.2.0"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
+
+# ZnVault configuration
+readonly VAULT_URL="${VAULT_URL:-https://vault.zincapp.com}"
+readonly VAULT_TENANT="${VAULT_TENANT:-root}"
 
 # Preserve timestamp/logfile across phases
 readonly TIMESTAMP="${BOOT_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
@@ -187,6 +197,8 @@ elevate_and_apply() {
     BOOT_SYSPREP="${BOOT_SYSPREP:-no}" \
     BOOT_UNATTENDED_ACTION="${BOOT_UNATTENDED_ACTION:-none}" \
     BOOT_UNATTENDED_WINDOW="${BOOT_UNATTENDED_WINDOW:-}" \
+    BOOT_SSH_CA="${BOOT_SSH_CA:-no}" \
+    BOOT_PKI_CA="${BOOT_PKI_CA:-no}" \
     bash "$0"
 }
 
@@ -773,6 +785,106 @@ EOF
   fi
 }
 
+# ============================================================
+# ZnVault Integration
+# ============================================================
+
+configure_ssh_ca() {
+  step "Configuring SSH Certificate Authority trust"
+
+  local ca_url="${VAULT_URL}/v1/ssh/ca/${VAULT_TENANT}/public-key/raw"
+  local ca_file="/etc/ssh/trusted-user-ca-keys.pub"
+  local principals_dir="/etc/ssh/auth_principals"
+
+  info "Fetching CA public key from ${DIM}${ca_url}${RESET}"
+
+  if [[ "${DRY_RUN}" != "yes" ]]; then
+    # Fetch CA public key (allow self-signed certs with -k if needed)
+    if ! curl -fsSL -k "${ca_url}" -o "${ca_file}"; then
+      warn "Failed to fetch SSH CA public key from vault"
+      warn "SSH certificate authentication will not be configured"
+      return 0
+    fi
+
+    # Validate the key was fetched
+    if ! grep -q "^ssh-" "${ca_file}"; then
+      warn "Invalid SSH CA public key received"
+      rm -f "${ca_file}"
+      return 0
+    fi
+
+    chmod 644 "${ca_file}"
+    info "CA public key saved to ${DIM}${ca_file}${RESET}"
+
+    # Create principals directory
+    mkdir -p "${principals_dir}"
+
+    # Configure which principals can access sysadmin
+    # "admin" principal = full access (matches infrastructure group mapping)
+    echo "admin" > "${principals_dir}/sysadmin"
+    chmod 644 "${principals_dir}/sysadmin"
+    info "Configured principal 'admin' for user 'sysadmin'"
+
+    # Update sshd_config if not already configured
+    if ! grep -q "TrustedUserCAKeys" /etc/ssh/sshd_config; then
+      cat >> /etc/ssh/sshd_config <<'EOF'
+
+# ZnVault SSH Certificate Authority
+TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+EOF
+      info "Updated sshd_config with CA trust settings"
+    else
+      info "sshd_config already has TrustedUserCAKeys configured"
+    fi
+
+    # Restart SSH to apply changes
+    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+  else
+    printf '  %s[dry-run]%s Would fetch SSH CA key and configure sshd\n' "${DIM}" "${RESET}"
+  fi
+
+  success "SSH CA trust configured"
+}
+
+configure_vault_pki_ca() {
+  step "Adding ZnVault PKI root CA to system trust store"
+
+  local ca_url="${VAULT_URL}/v1/pki/root-ca/cert"
+  local ca_file="/usr/local/share/ca-certificates/znvault-root-ca.crt"
+
+  info "Fetching PKI root CA from ${DIM}${ca_url}${RESET}"
+
+  if [[ "${DRY_RUN}" != "yes" ]]; then
+    # Ensure ca-certificates directory exists
+    mkdir -p /usr/local/share/ca-certificates
+
+    # Fetch root CA certificate (allow self-signed with -k for initial bootstrap)
+    if ! curl -fsSL -k "${ca_url}" -o "${ca_file}"; then
+      warn "Failed to fetch PKI root CA from vault"
+      warn "Vault CA will not be added to system trust store"
+      return 0
+    fi
+
+    # Validate it looks like a certificate
+    if ! grep -q "BEGIN CERTIFICATE" "${ca_file}"; then
+      warn "Invalid certificate received from vault"
+      rm -f "${ca_file}"
+      return 0
+    fi
+
+    chmod 644 "${ca_file}"
+    info "Root CA saved to ${DIM}${ca_file}${RESET}"
+
+    # Update system CA trust store
+    update-ca-certificates || warn "update-ca-certificates failed"
+  else
+    printf '  %s[dry-run]%s Would fetch PKI CA and update system trust store\n' "${DIM}" "${RESET}"
+  fi
+
+  success "ZnVault PKI CA added to system trust store"
+}
+
 expand_root_filesystem() {
   step "Expanding root filesystem"
 
@@ -921,6 +1033,15 @@ print_final_report() {
   printf "  %sSSH Keys:%s     %s host keys regenerated\n" "${BOLD}" "${RESET}" "$(find /etc/ssh -maxdepth 1 -name 'ssh_host_*_key' 2>/dev/null | wc -l)"
   printf "  %sMachine ID:%s   %s%s%s\n" "${BOLD}" "${RESET}" "${DIM}" "$(cat /etc/machine-id 2>/dev/null || echo 'N/A')" "${RESET}"
   echo ""
+
+  # ZnVault integration status
+  if [[ -f /etc/ssh/trusted-user-ca-keys.pub ]]; then
+    printf "  %sSSH CA:%s       %s✓ Configured%s (cert auth enabled)\n" "${BOLD}" "${RESET}" "${GREEN}" "${RESET}"
+  fi
+  if [[ -f /usr/local/share/ca-certificates/znvault-root-ca.crt ]]; then
+    printf "  %sVault PKI:%s    %s✓ Trusted%s (root CA installed)\n" "${BOLD}" "${RESET}" "${GREEN}" "${RESET}"
+  fi
+  echo ""
   printf "  %sLog file:%s     %s%s%s\n" "${BOLD}" "${RESET}" "${DIM}" "${LOGFILE}" "${RESET}"
   printf "  %sReport:%s       %s%s%s\n" "${BOLD}" "${RESET}" "${DIM}" "${report_file}" "${RESET}"
   printf "  %sMarker:%s       %s%s%s\n" "${BOLD}" "${RESET}" "${DIM}" "${BOOTSTRAP_MARKER}" "${RESET}"
@@ -972,6 +1093,8 @@ print_summary() {
   local sysprep="${11}"
   local unattended_action="${12:-none}"
   local unattended_window="${13:-}"
+  local ssh_ca="${14:-no}"
+  local pki_ca="${15:-no}"
 
   header "Bootstrap Summary"
 
@@ -1008,6 +1131,14 @@ print_summary() {
     printf "    %s✓%s Set updates window: %s\n" "${GREEN}" "${RESET}" "${unattended_window}"
   fi
   [[ "$sysprep" == "yes" ]] && printf "    %s✓%s Clean system state (sysprep)\n" "${GREEN}" "${RESET}"
+
+  # ZnVault integration
+  if [[ "$ssh_ca" == "yes" || "$pki_ca" == "yes" ]]; then
+    echo ""
+    printf "    %s── ZnVault Integration ──%s\n" "${DIM}" "${RESET}"
+    [[ "$ssh_ca" == "yes" ]] && printf "    %s✓%s Configure SSH CA trust (${VAULT_TENANT}@${VAULT_URL})\n" "${GREEN}" "${RESET}"
+    [[ "$pki_ca" == "yes" ]] && printf "    %s✓%s Add PKI root CA to system trust\n" "${GREEN}" "${RESET}"
+  fi
 
   printf "    %s✓%s Reboot system\n" "${GREEN}" "${RESET}"
   echo ""
@@ -1219,6 +1350,22 @@ interactive_phase() {
   fi
   export BOOT_SYSPREP="${sysprep}"
 
+  # ZnVault integration
+  echo ""
+  printf '  %s── ZnVault Integration ──%s\n\n' "${BOLD_CYAN}" "${RESET}"
+
+  local configure_ssh_ca="no"
+  if ask_yes_no "Configure SSH CA trust (certificate-based SSH auth via ZnVault)?" "yes"; then
+    configure_ssh_ca="yes"
+  fi
+  export BOOT_SSH_CA="${configure_ssh_ca}"
+
+  local configure_pki_ca="no"
+  if ask_yes_no "Add ZnVault PKI root CA to system trust store?" "yes"; then
+    configure_pki_ca="yes"
+  fi
+  export BOOT_PKI_CA="${configure_pki_ca}"
+
   # Show summary and confirm
   print_summary \
     "$BOOT_NEW_HOSTNAME" \
@@ -1233,7 +1380,9 @@ interactive_phase() {
     "$virt" \
     "$BOOT_SYSPREP" \
     "$BOOT_UNATTENDED_ACTION" \
-    "$BOOT_UNATTENDED_WINDOW"
+    "$BOOT_UNATTENDED_WINDOW" \
+    "$BOOT_SSH_CA" \
+    "$BOOT_PKI_CA"
 
   ask_yes_no "Proceed with these changes?" "no" || die "Aborted by user"
 
@@ -1279,6 +1428,10 @@ apply_phase() {
     "${BOOT_UNATTENDED_ACTION}" \
     "${BOOT_UNATTENDED_WINDOW}"
   [[ "${BOOT_SYSPREP}" == "yes" ]] && clean_system_state
+
+  # ZnVault integration
+  [[ "${BOOT_SSH_CA}" == "yes" ]] && configure_ssh_ca
+  [[ "${BOOT_PKI_CA}" == "yes" ]] && configure_vault_pki_ca
 
   # Print completion report
   print_final_report
