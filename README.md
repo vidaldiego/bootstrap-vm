@@ -159,21 +159,80 @@ FORCE_RERUN=yes ./bootstrap-vm.sh
 
 ## Automated VM Provisioning (vCenter)
 
-The `New-BootstrappedVM.ps1` PowerCLI script automates the full workflow:
+Two scripts automate VM creation from vCenter templates:
 
-1. Creates a VM from a vCenter template
-2. Waits for the VM to boot and get an IP
-3. Waits for SSH to become available
-4. Runs bootstrap-vm.sh with specified arguments
+| Script | Platform | Tool |
+|--------|----------|------|
+| `new-bootstrapped-vm.sh` | Linux/macOS | govc |
+| `New-BootstrappedVM.ps1` | Windows/Cross-platform | PowerCLI |
 
-### Prerequisites
+Both scripts:
+1. Clone a VM from a vCenter template
+2. Wait for the VM to boot and get an IP (via VMware Tools)
+3. Wait for SSH to become available
+4. Run bootstrap-vm.sh with specified arguments
 
+### Linux/macOS (govc)
+
+**Prerequisites:**
+- [govc](https://github.com/vmware/govmomi/releases) CLI tool
+- SSH key for the template's default user
+
+```bash
+# Install govc
+curl -L -o govc.tar.gz https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz
+tar -xzf govc.tar.gz govc && sudo mv govc /usr/local/bin/
+
+# Set vCenter credentials
+export GOVC_URL=vcenter.example.com
+export GOVC_USERNAME=administrator@vsphere.local
+export GOVC_PASSWORD=secret
+export GOVC_INSECURE=1  # optional, skip cert check
+
+# Basic - creates VM with DHCP
+./new-bootstrapped-vm.sh --name web-01 --template ubuntu-24.04-template \
+    --datacenter DC1 --cluster Production --datastore vsanDatastore
+
+# With static IP and custom resources
+./new-bootstrapped-vm.sh --name db-01 --template ubuntu-24.04-template \
+    --datacenter DC1 --cluster Production --datastore vsanDatastore \
+    --static-ip 10.10.30.50/24 --num-cpu 4 --memory-gb 16
+
+# With custom network and folder
+./new-bootstrapped-vm.sh --name app-01 --template ubuntu-24.04-template \
+    --datacenter DC1 --cluster Production --datastore vsanDatastore \
+    --network VLAN100 --folder "Production VMs" --static-ip 10.10.100.20/24
+```
+
+**Options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--name` | Yes | VM name (also used as hostname) |
+| `--template` | Yes | Template name to clone from |
+| `--datacenter` | Yes | vCenter datacenter |
+| `--cluster` | Yes | Target cluster |
+| `--datastore` | Yes | Target datastore |
+| `--folder` | No | VM folder path |
+| `--network` | No | Port group name |
+| `--num-cpu` | No | CPU count |
+| `--memory-gb` | No | Memory in GB |
+| `--static-ip` | No | Static IP in CIDR notation |
+| `--gateway` | No | Gateway (auto-detected if omitted) |
+| `--dns` | No | DNS servers (auto-detected if omitted) |
+| `--ssh-user` | No | SSH user (default: sysadmin) |
+| `--ssh-key` | No | SSH key path (default: ~/.ssh/id_ed25519) |
+| `--no-ssh-ca` | No | Skip SSH CA configuration |
+| `--no-pki-ca` | No | Skip PKI CA configuration |
+| `--skip-bootstrap` | No | Only create VM, don't run bootstrap |
+| `--timeout` | No | Timeout in minutes (default: 10) |
+
+### Windows/PowerShell (PowerCLI)
+
+**Prerequisites:**
 - PowerShell 7+ (pwsh)
 - VMware PowerCLI: `Install-Module VMware.PowerCLI -Scope CurrentUser`
 - SSH client available in PATH
-- SSH key for the template's default user
-
-### Usage
 
 ```powershell
 # Set vCenter credentials (or use -VCenterServer with interactive login)
@@ -189,14 +248,9 @@ $env:VI_PASSWORD = "secret"
 ./New-BootstrappedVM.ps1 -Name "db-01" -Template "ubuntu-24.04-template" `
     -Datacenter "DC1" -Cluster "Production" -Datastore "vsanDatastore" `
     -StaticIP "10.10.30.50/24" -NumCpu 4 -MemoryGB 16
-
-# With custom network and folder
-./New-BootstrappedVM.ps1 -Name "app-01" -Template "ubuntu-24.04-template" `
-    -Datacenter "DC1" -Cluster "Production" -Datastore "vsanDatastore" `
-    -Network "VLAN100" -Folder "Production VMs" -StaticIP "10.10.100.20/24"
 ```
 
-### Parameters
+**Parameters:**
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
