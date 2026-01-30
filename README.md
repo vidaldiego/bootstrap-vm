@@ -157,6 +157,68 @@ FORCE=yes ./bootstrap-vm.sh
 FORCE_RERUN=yes ./bootstrap-vm.sh
 ```
 
+## Automated VM Provisioning (vCenter)
+
+The `New-BootstrappedVM.ps1` PowerCLI script automates the full workflow:
+
+1. Creates a VM from a vCenter template
+2. Waits for the VM to boot and get an IP
+3. Waits for SSH to become available
+4. Runs bootstrap-vm.sh with specified arguments
+
+### Prerequisites
+
+- PowerShell 7+ (pwsh)
+- VMware PowerCLI: `Install-Module VMware.PowerCLI -Scope CurrentUser`
+- SSH client available in PATH
+- SSH key for the template's default user
+
+### Usage
+
+```powershell
+# Set vCenter credentials (or use -VCenterServer with interactive login)
+$env:VI_SERVER = "vcenter.example.com"
+$env:VI_USERNAME = "administrator@vsphere.local"
+$env:VI_PASSWORD = "secret"
+
+# Basic - creates VM with DHCP
+./New-BootstrappedVM.ps1 -Name "web-01" -Template "ubuntu-24.04-template" `
+    -Datacenter "DC1" -Cluster "Production" -Datastore "vsanDatastore"
+
+# With static IP
+./New-BootstrappedVM.ps1 -Name "db-01" -Template "ubuntu-24.04-template" `
+    -Datacenter "DC1" -Cluster "Production" -Datastore "vsanDatastore" `
+    -StaticIP "10.10.30.50/24" -NumCpu 4 -MemoryGB 16
+
+# With custom network and folder
+./New-BootstrappedVM.ps1 -Name "app-01" -Template "ubuntu-24.04-template" `
+    -Datacenter "DC1" -Cluster "Production" -Datastore "vsanDatastore" `
+    -Network "VLAN100" -Folder "Production VMs" -StaticIP "10.10.100.20/24"
+```
+
+### Parameters
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Name` | Yes | VM name (also used as hostname) |
+| `-Template` | Yes | Template name to clone from |
+| `-Datacenter` | Yes | vCenter datacenter |
+| `-Cluster` | Yes | Target cluster |
+| `-Datastore` | Yes | Target datastore |
+| `-Folder` | No | VM folder path |
+| `-Network` | No | Port group name |
+| `-NumCpu` | No | CPU count |
+| `-MemoryGB` | No | Memory in GB |
+| `-StaticIP` | No | Static IP in CIDR notation |
+| `-Gateway` | No | Gateway (auto-detected if omitted) |
+| `-DNS` | No | DNS servers (auto-detected if omitted) |
+| `-SSHUser` | No | SSH user (default: sysadmin) |
+| `-SSHKeyPath` | No | SSH key path (default: ~/.ssh/id_ed25519) |
+| `-NoSSHCA` | No | Skip SSH CA configuration |
+| `-NoPKICA` | No | Skip PKI CA configuration |
+| `-SkipBootstrap` | No | Only create VM, don't run bootstrap |
+| `-TimeoutMinutes` | No | Timeout for VM ready (default: 10) |
+
 ## What It Does
 
 1. **System update** - Runs `apt-get update && apt-get full-upgrade`
