@@ -2,7 +2,17 @@
 set -euo pipefail
 
 # Bootstrap VM Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/install.sh | bash
+#
+# Interactive mode:
+#   curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/install.sh | bash
+#
+# CLI mode (pass arguments with -s --):
+#   curl -fsSL .../install.sh | bash -s -- --hostname myserver
+#   curl -fsSL .../install.sh | bash -s -- --hostname myserver --static-ip 10.10.30.50/24 --gateway 10.10.30.1
+#   curl -fsSL .../install.sh | bash -s -- --help
+#
+# Specify version/branch:
+#   BOOTSTRAP_VERSION=v2.3.0 curl -fsSL .../install.sh | bash -s -- --hostname myserver
 
 REPO="vidaldiego/bootstrap-vm"
 BRANCH="${BOOTSTRAP_VERSION:-main}"

@@ -29,7 +29,7 @@ set -Eeuo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
-readonly SCRIPT_VERSION="2.2.0"
+readonly SCRIPT_VERSION="2.3.0"
 readonly BOOTSTRAP_MARKER="/etc/bootstrap-done"
 readonly GITHUB_REPO="vidaldiego/bootstrap-vm"
 
@@ -48,6 +48,9 @@ FORCE_RERUN="${FORCE_RERUN:-no}"
 
 # Two-phase execution: "interactive" (collect input) or "apply" (execute as root)
 BOOTSTRAP_PHASE="${BOOTSTRAP_PHASE:-interactive}"
+
+# CLI mode flag (set when any CLI args are provided)
+CLI_MODE="${CLI_MODE:-no}"
 
 # ============================================================
 # Color Support
@@ -180,6 +183,7 @@ require_root() {
 elevate_and_apply() {
   exec sudo -E env \
     BOOTSTRAP_PHASE=apply \
+    CLI_MODE="${CLI_MODE}" \
     DRY_RUN="${DRY_RUN}" \
     FORCE="${FORCE}" \
     FORCE_RERUN="${FORCE_RERUN}" \
@@ -223,6 +227,289 @@ ask_yes_no() {
       *) echo "Please answer y or n." ;;
     esac
   done
+}
+
+# ============================================================
+# CLI Argument Parsing
+# ============================================================
+
+show_help() {
+  cat <<EOF
+${BOLD}Ubuntu VM Bootstrap v${SCRIPT_VERSION}${RESET}
+
+${BOLD}USAGE:${RESET}
+    ${SCRIPT_NAME} [OPTIONS]
+
+    Without options, runs in interactive mode.
+    With options, runs in non-interactive CLI mode.
+
+${BOLD}OPTIONS:${RESET}
+    ${BOLD}Required in CLI mode:${RESET}
+    -H, --hostname NAME       Set the hostname
+
+    ${BOLD}Network configuration:${RESET}
+    -i, --static-ip CIDR      Static IP with subnet (e.g., 10.10.30.50/24)
+    -g, --gateway IP          Gateway address (required if --static-ip is set)
+    -d, --dns SERVERS         Comma-separated DNS servers
+    -I, --interface IF        Network interface (auto-detected if omitted)
+
+    ${BOLD}Disk and system:${RESET}
+    --expand-disk             Expand root filesystem (default in CLI mode)
+    --no-expand-disk          Skip disk expansion
+    --sysprep                 Clean system state (history, logs, temp files)
+    --cloud-init-clean        Clean cloud-init state
+    --clean-creds             Clean cloud credentials (AWS/Azure/GCP)
+
+    ${BOLD}Updates:${RESET}
+    --disable-updates         Disable unattended-upgrades
+    --update-window HH:MM     Set maintenance window (e.g., 04:00)
+
+    ${BOLD}ZnVault integration:${RESET}
+    --ssh-ca                  Configure SSH CA trust (default in CLI mode)
+    --no-ssh-ca               Skip SSH CA configuration
+    --pki-ca                  Add PKI root CA to trust store (default in CLI mode)
+    --no-pki-ca               Skip PKI CA configuration
+
+    ${BOLD}General:${RESET}
+    -y, --yes                 Skip confirmation prompts
+    -n, --dry-run             Show what would be done without making changes
+    --force-rerun             Allow re-running on already bootstrapped machine
+    -h, --help                Show this help message
+    -v, --version             Show version
+
+${BOLD}ENVIRONMENT VARIABLES:${RESET}
+    VAULT_URL                 Vault server URL (default: https://vault.zincapp.com)
+    VAULT_TENANT              Tenant for SSH CA (default: zincapp)
+    DRY_RUN=yes               Same as --dry-run
+    FORCE=yes                 Same as --yes
+    FORCE_RERUN=yes           Same as --force-rerun
+
+${BOLD}EXAMPLES:${RESET}
+    # Interactive mode (prompts for all values)
+    ${SCRIPT_NAME}
+
+    # Minimal CLI mode (hostname only, defaults for everything else)
+    ${SCRIPT_NAME} --hostname myserver
+
+    # Full CLI mode with static IP
+    ${SCRIPT_NAME} --hostname myserver --static-ip 10.10.30.50/24 --gateway 10.10.30.1
+
+    # Via curl installer with arguments
+    curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh | bash -s -- --hostname myserver
+
+    # Dry-run to preview changes
+    ${SCRIPT_NAME} --hostname myserver --dry-run
+
+EOF
+}
+
+show_version() {
+  echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"
+}
+
+parse_args() {
+  # If no arguments, stay in interactive mode
+  [[ $# -eq 0 ]] && return 0
+
+  # Track if we've seen any "real" options (not just -h or -v)
+  local has_config_args="no"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -H|--hostname)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        BOOT_NEW_HOSTNAME="$2"
+        has_config_args="yes"
+        shift 2
+        ;;
+      -i|--static-ip)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        CLI_STATIC_IP="$2"
+        BOOT_CHANGE_IP="yes"
+        has_config_args="yes"
+        shift 2
+        ;;
+      -g|--gateway)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        BOOT_GATEWAY="$2"
+        has_config_args="yes"
+        shift 2
+        ;;
+      -d|--dns)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        BOOT_DNS_SERVERS="$2"
+        has_config_args="yes"
+        shift 2
+        ;;
+      -I|--interface)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        BOOT_PRIMARY_IF="$2"
+        has_config_args="yes"
+        shift 2
+        ;;
+      --expand-disk)
+        BOOT_EXPAND_DISK="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --no-expand-disk)
+        BOOT_EXPAND_DISK="no"
+        has_config_args="yes"
+        shift
+        ;;
+      --sysprep)
+        BOOT_SYSPREP="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --cloud-init-clean)
+        BOOT_CLOUD_INIT_CLEAN="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --clean-creds)
+        BOOT_CLEAN_CREDS="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --disable-updates)
+        BOOT_UNATTENDED_ACTION="disable"
+        has_config_args="yes"
+        shift
+        ;;
+      --update-window)
+        [[ -z "${2:-}" ]] && die "Option $1 requires an argument"
+        BOOT_UNATTENDED_ACTION="window"
+        BOOT_UNATTENDED_WINDOW="$2"
+        has_config_args="yes"
+        shift 2
+        ;;
+      --ssh-ca)
+        BOOT_SSH_CA="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --no-ssh-ca)
+        BOOT_SSH_CA="no"
+        has_config_args="yes"
+        shift
+        ;;
+      --pki-ca)
+        BOOT_PKI_CA="yes"
+        has_config_args="yes"
+        shift
+        ;;
+      --no-pki-ca)
+        BOOT_PKI_CA="no"
+        has_config_args="yes"
+        shift
+        ;;
+      -y|--yes)
+        FORCE="yes"
+        shift
+        ;;
+      -n|--dry-run)
+        DRY_RUN="yes"
+        shift
+        ;;
+      --force-rerun)
+        FORCE_RERUN="yes"
+        shift
+        ;;
+      -h|--help)
+        show_help
+        exit 0
+        ;;
+      -v|--version)
+        show_version
+        exit 0
+        ;;
+      -*)
+        die "Unknown option: $1 (use --help for usage)"
+        ;;
+      *)
+        die "Unexpected argument: $1 (use --help for usage)"
+        ;;
+    esac
+  done
+
+  # If we parsed config arguments, switch to CLI mode
+  if [[ "$has_config_args" == "yes" ]]; then
+    CLI_MODE="yes"
+  fi
+}
+
+# Set CLI mode defaults (called after parse_args if in CLI mode)
+apply_cli_defaults() {
+  # These default to "yes" in CLI mode if not explicitly set
+  BOOT_EXPAND_DISK="${BOOT_EXPAND_DISK:-yes}"
+  BOOT_SSH_CA="${BOOT_SSH_CA:-yes}"
+  BOOT_PKI_CA="${BOOT_PKI_CA:-yes}"
+
+  # These default to "no" in CLI mode if not explicitly set
+  BOOT_CHANGE_IP="${BOOT_CHANGE_IP:-no}"
+  BOOT_CLOUD_INIT_CLEAN="${BOOT_CLOUD_INIT_CLEAN:-no}"
+  BOOT_CLEAN_CREDS="${BOOT_CLEAN_CREDS:-no}"
+  BOOT_SYSPREP="${BOOT_SYSPREP:-no}"
+  BOOT_UNATTENDED_ACTION="${BOOT_UNATTENDED_ACTION:-none}"
+  BOOT_UNATTENDED_WINDOW="${BOOT_UNATTENDED_WINDOW:-}"
+}
+
+# Validate CLI arguments
+validate_cli_args() {
+  # Hostname is required in CLI mode
+  if [[ -z "${BOOT_NEW_HOSTNAME:-}" ]]; then
+    die "Hostname is required in CLI mode. Use --hostname NAME"
+  fi
+
+  if ! validate_hostname "$BOOT_NEW_HOSTNAME"; then
+    die "Invalid hostname: $BOOT_NEW_HOSTNAME"
+  fi
+
+  # If static IP is requested, validate network settings
+  if [[ "${BOOT_CHANGE_IP}" == "yes" ]]; then
+    # Auto-detect interface if not specified
+    if [[ -z "${BOOT_PRIMARY_IF:-}" ]]; then
+      BOOT_PRIMARY_IF="$(detect_primary_interface)"
+      [[ -z "$BOOT_PRIMARY_IF" ]] && die "Could not auto-detect network interface. Use --interface"
+    fi
+
+    # Expand and validate static IP
+    if [[ -n "${CLI_STATIC_IP:-}" ]]; then
+      local current_ip
+      current_ip="$(detect_current_ip "$BOOT_PRIMARY_IF")"
+
+      # Expand shorthand notation
+      BOOT_STATIC_IP="$(expand_ip_input "$CLI_STATIC_IP" "${current_ip:-0.0.0.0/24}")"
+      if [[ -z "$BOOT_STATIC_IP" ]] || ! validate_cidr "$BOOT_STATIC_IP"; then
+        die "Invalid static IP: $CLI_STATIC_IP"
+      fi
+    fi
+
+    # Gateway is required if static IP is set
+    if [[ -z "${BOOT_GATEWAY:-}" ]]; then
+      die "Gateway is required when using --static-ip. Use --gateway IP"
+    fi
+
+    if ! validate_ip "$BOOT_GATEWAY"; then
+      die "Invalid gateway: $BOOT_GATEWAY"
+    fi
+
+    # DNS is optional but validate if provided
+    if [[ -n "${BOOT_DNS_SERVERS:-}" ]] && ! validate_dns_list "$BOOT_DNS_SERVERS"; then
+      die "Invalid DNS servers: $BOOT_DNS_SERVERS"
+    fi
+  fi
+
+  # Validate update window format if specified
+  if [[ "${BOOT_UNATTENDED_ACTION}" == "window" ]]; then
+    if [[ -z "${BOOT_UNATTENDED_WINDOW:-}" ]]; then
+      die "Update window time required with --update-window"
+    fi
+    if [[ ! "$BOOT_UNATTENDED_WINDOW" =~ ^[0-2]?[0-9]:[0-5][0-9]$ ]]; then
+      die "Invalid update window format: $BOOT_UNATTENDED_WINDOW (use HH:MM)"
+    fi
+  fi
 }
 
 # ============================================================
@@ -1456,13 +1743,83 @@ apply_phase() {
 }
 
 # ============================================================
+# Main - CLI Phase (non-interactive)
+# ============================================================
+
+cli_phase() {
+  header "Ubuntu VM Bootstrap v${SCRIPT_VERSION} (CLI Mode)"
+
+  [[ "${DRY_RUN}" == "yes" ]] && printf '  %s⚠  Running in DRY-RUN mode%s\n\n' "${BOLD_YELLOW}" "${RESET}"
+
+  # Check if bootstrap was already run on this machine
+  check_previous_run
+
+  # Auto-detect interface if not specified
+  if [[ -z "${BOOT_PRIMARY_IF:-}" ]]; then
+    BOOT_PRIMARY_IF="$(detect_primary_interface)"
+  fi
+
+  local virt
+  virt="$(detect_virtualization)"
+
+  info "Detected interface: ${CYAN}${BOOT_PRIMARY_IF:-none}${RESET}"
+  info "Detected environment: ${CYAN}${virt}${RESET}"
+  echo ""
+
+  # Apply defaults for unspecified options
+  apply_cli_defaults
+
+  # Validate all CLI arguments
+  validate_cli_args
+
+  # Show summary
+  print_summary \
+    "$BOOT_NEW_HOSTNAME" \
+    "$BOOT_CHANGE_IP" \
+    "$BOOT_PRIMARY_IF" \
+    "${BOOT_STATIC_IP:-}" \
+    "${BOOT_GATEWAY:-}" \
+    "${BOOT_DNS_SERVERS:-}" \
+    "$BOOT_CLOUD_INIT_CLEAN" \
+    "$BOOT_EXPAND_DISK" \
+    "$BOOT_CLEAN_CREDS" \
+    "$virt" \
+    "$BOOT_SYSPREP" \
+    "$BOOT_UNATTENDED_ACTION" \
+    "$BOOT_UNATTENDED_WINDOW" \
+    "$BOOT_SSH_CA" \
+    "$BOOT_PKI_CA"
+
+  # Confirm unless --yes was passed
+  ask_yes_no "Proceed with these changes?" "no" || die "Aborted by user"
+
+  # Re-execute as root with all state passed via environment
+  if [[ "${EUID}" -ne 0 ]]; then
+    info "Elevating to root..."
+    elevate_and_apply
+  else
+    apply_phase
+  fi
+}
+
+# ============================================================
 # Entry Point
 # ============================================================
 
 main() {
+  # Parse command line arguments first (before phase check)
+  # Skip parsing if we're in apply phase (already parsed in interactive/cli phase)
+  if [[ "${BOOTSTRAP_PHASE}" == "interactive" ]]; then
+    parse_args "$@"
+  fi
+
   case "${BOOTSTRAP_PHASE}" in
     interactive)
-      interactive_phase
+      if [[ "${CLI_MODE}" == "yes" ]]; then
+        cli_phase
+      else
+        interactive_phase
+      fi
       ;;
     apply)
       apply_phase

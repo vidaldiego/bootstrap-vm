@@ -2,6 +2,46 @@
 # Place this script on your VM templates at /usr/local/bin/bootstrap
 # After cloning, just run: bootstrap
 set -euo pipefail
-curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/bootstrap-vm.sh -o /tmp/bootstrap-vm.sh
+
+REPO="vidaldiego/bootstrap-vm"
+SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main/bootstrap-vm.sh"
+
+# Quick local help (doesn't require download)
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Bootstrap VM - Ubuntu VM template bootstrapping tool
+
+Usage:
+  bootstrap                     Interactive mode (prompts for all values)
+  bootstrap --hostname NAME     CLI mode with defaults
+  bootstrap [OPTIONS]           CLI mode with custom options
+
+This script downloads and runs the latest bootstrap-vm.sh from GitHub.
+All arguments are passed through to bootstrap-vm.sh.
+
+Common options:
+  -H, --hostname NAME     Set hostname (required in CLI mode)
+  -i, --static-ip CIDR    Static IP (e.g., 10.10.30.50/24)
+  -g, --gateway IP        Gateway address
+  -d, --dns SERVERS       DNS servers (comma-separated)
+  --no-ssh-ca             Skip SSH CA configuration
+  --no-pki-ca             Skip PKI CA configuration
+  -y, --yes               Skip confirmation prompts
+  -n, --dry-run           Preview changes without applying
+  -h, --help              Show this help (or full help from downloaded script)
+
+Examples:
+  bootstrap
+  bootstrap --hostname myserver
+  bootstrap --hostname myserver --static-ip 10.10.30.50/24 --gateway 10.10.30.1 --yes
+
+For full help, the script will be downloaded. Run without -h to see all options.
+Source: https://github.com/vidaldiego/bootstrap-vm
+EOF
+  exit 0
+fi
+
+echo "Downloading bootstrap-vm.sh..."
+curl -fsSL "${SCRIPT_URL}" -o /tmp/bootstrap-vm.sh
 chmod +x /tmp/bootstrap-vm.sh
 exec /tmp/bootstrap-vm.sh "$@"
