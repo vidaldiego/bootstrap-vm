@@ -22,8 +22,8 @@ All arguments are passed through to bootstrap-vm.sh.
 Common options:
   -H, --hostname NAME     Set hostname (required in CLI mode)
   -i, --static-ip CIDR    Static IP (e.g., 10.10.30.50/24)
-  -g, --gateway IP        Gateway address
-  -d, --dns SERVERS       DNS servers (comma-separated)
+  -g, --gateway IP        Gateway (auto-detected if omitted)
+  -d, --dns SERVERS       DNS servers (auto-detected if omitted)
   --no-ssh-ca             Skip SSH CA configuration
   --no-pki-ca             Skip PKI CA configuration
   -y, --yes               Skip confirmation prompts
@@ -33,7 +33,7 @@ Common options:
 Examples:
   bootstrap
   bootstrap --hostname myserver
-  bootstrap --hostname myserver --static-ip 10.10.30.50/24 --gateway 10.10.30.1 --yes
+  bootstrap --hostname myserver --static-ip 10.10.30.50/24 --yes
 
 For full help, the script will be downloaded. Run without -h to see all options.
 Source: https://github.com/vidaldiego/bootstrap-vm

@@ -11,11 +11,10 @@ curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/instal
 # CLI mode (non-interactive)
 curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/install.sh | bash -s -- --hostname myserver
 
-# CLI mode with static IP
+# CLI mode with static IP (gateway/DNS auto-detected from current config)
 curl -fsSL https://raw.githubusercontent.com/vidaldiego/bootstrap-vm/main/install.sh | bash -s -- \
   --hostname myserver \
   --static-ip 10.10.30.50/24 \
-  --gateway 10.10.30.1 \
   --yes
 ```
 
@@ -90,8 +89,8 @@ In CLI mode, `--hostname` is required. Other options have sensible defaults.
 |--------|-------------|
 | `-H, --hostname NAME` | Set hostname (required in CLI mode) |
 | `-i, --static-ip CIDR` | Static IP with subnet (e.g., `10.10.30.50/24`) |
-| `-g, --gateway IP` | Gateway address (required with `--static-ip`) |
-| `-d, --dns SERVERS` | Comma-separated DNS servers |
+| `-g, --gateway IP` | Gateway address (auto-detected if omitted) |
+| `-d, --dns SERVERS` | Comma-separated DNS servers (auto-detected if omitted) |
 | `-I, --interface IF` | Network interface (auto-detected if omitted) |
 | `--expand-disk` | Expand root filesystem (default: yes) |
 | `--no-expand-disk` | Skip disk expansion |
@@ -116,7 +115,10 @@ In CLI mode, `--hostname` is required. Other options have sensible defaults.
 # Minimal - hostname only (uses defaults)
 ./bootstrap-vm.sh --hostname myserver
 
-# With static IP
+# With static IP (gateway/DNS auto-detected)
+./bootstrap-vm.sh --hostname myserver --static-ip 10.10.30.50/24
+
+# With static IP and explicit gateway/DNS
 ./bootstrap-vm.sh --hostname myserver \
   --static-ip 10.10.30.50/24 \
   --gateway 10.10.30.1 \

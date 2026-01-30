@@ -249,8 +249,8 @@ ${BOLD}OPTIONS:${RESET}
 
     ${BOLD}Network configuration:${RESET}
     -i, --static-ip CIDR      Static IP with subnet (e.g., 10.10.30.50/24)
-    -g, --gateway IP          Gateway address (required if --static-ip is set)
-    -d, --dns SERVERS         Comma-separated DNS servers
+    -g, --gateway IP          Gateway address (auto-detected from current config)
+    -d, --dns SERVERS         Comma-separated DNS servers (auto-detected from current config)
     -I, --interface IF        Network interface (auto-detected if omitted)
 
     ${BOLD}Disk and system:${RESET}
@@ -486,16 +486,28 @@ validate_cli_args() {
       fi
     fi
 
-    # Gateway is required if static IP is set
+    # Auto-detect gateway if not provided
     if [[ -z "${BOOT_GATEWAY:-}" ]]; then
-      die "Gateway is required when using --static-ip. Use --gateway IP"
+      BOOT_GATEWAY="$(detect_current_gateway)"
+      if [[ -z "$BOOT_GATEWAY" ]]; then
+        die "Could not auto-detect gateway. Use --gateway IP"
+      fi
+      info "Auto-detected gateway: ${CYAN}${BOOT_GATEWAY}${RESET}"
     fi
 
     if ! validate_ip "$BOOT_GATEWAY"; then
       die "Invalid gateway: $BOOT_GATEWAY"
     fi
 
-    # DNS is optional but validate if provided
+    # Auto-detect DNS if not provided
+    if [[ -z "${BOOT_DNS_SERVERS:-}" ]]; then
+      BOOT_DNS_SERVERS="$(detect_current_dns "$BOOT_PRIMARY_IF")"
+      if [[ -n "$BOOT_DNS_SERVERS" ]]; then
+        info "Auto-detected DNS: ${CYAN}${BOOT_DNS_SERVERS}${RESET}"
+      fi
+    fi
+
+    # Validate DNS if provided (auto-detected or explicit)
     if [[ -n "${BOOT_DNS_SERVERS:-}" ]] && ! validate_dns_list "$BOOT_DNS_SERVERS"; then
       die "Invalid DNS servers: $BOOT_DNS_SERVERS"
     fi
