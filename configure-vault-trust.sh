@@ -73,6 +73,13 @@ configure_ssh_ca() {
   local principals_file="${principals_dir}/sysadmin"
   touch "${principals_file}"
   chmod 644 "${principals_file}"
+  # Guard against a pre-existing file that lacks a trailing newline (e.g. an
+  # operator hand-edited it): appending would otherwise concatenate onto the
+  # last principal, corrupting it. Normalize to a newline-terminated file first.
+  if [ -s "${principals_file}" ] && [ -n "$(tail -c1 "${principals_file}")" ]; then
+    echo >> "${principals_file}"
+  fi
+  # shellcheck disable=SC2043  # deliberate single-element seam; more principals (e.g. archon-deploy) added in a later plan
   for principal in admin; do
     if ! grep -qxF "${principal}" "${principals_file}"; then
       echo "${principal}" >> "${principals_file}"
