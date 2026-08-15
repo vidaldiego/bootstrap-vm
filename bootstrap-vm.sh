@@ -580,7 +580,7 @@ validate_hostname() {
 #   - Last two octets: ".30.50" -> replaces last two octets, keeps subnet
 expand_ip_input() {
   local input="$1"
-  local current_ip="$2"  # Current IP in CIDR format (e.g., 172.16.220.217/24)
+  local current_ip="$2"  # Current IP in CIDR format (e.g., 198.51.100.217/24)
 
   # Extract parts from current IP
   local current_addr="${current_ip%/*}"

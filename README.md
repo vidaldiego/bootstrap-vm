@@ -122,7 +122,7 @@ In CLI mode, `--hostname` is required. Other options have sensible defaults.
 ./bootstrap-vm.sh --hostname myserver \
   --static-ip 10.10.30.50/24 \
   --gateway 10.10.30.1 \
-  --dns "172.16.50.250,8.8.8.8"
+  --dns "203.0.113.53,8.8.8.8"
 
 # Full automation (no prompts)
 ./bootstrap-vm.sh --hostname myserver --yes
