@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zincapp.com/schemas/external-cloud-v1.schema.json",
+  "title": "ZincApp external cloud VM baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "provider",
+    "namePattern",
+    "network",
+    "guest",
+    "guestAccess",
+    "archon",
+    "validation"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1 },
+    "contractVersion": { "const": "external-cloud-v1" },
+    "provider": { "type": "string", "minLength": 1 },
+    "namePattern": { "type": "string", "minLength": 1 },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privateNetworkName",
+        "managementCidrs",
+        "publicSsh",
+        "privateSshSourceCidrs"
+      ],
+      "properties": {
+        "privateNetworkName": { "type": "string", "minLength": 1 },
+        "managementCidrs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "publicSsh": { "type": "boolean" },
+        "privateSshSourceCidrs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "guest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["osFamily", "adminUser", "sshAuthentication", "pkiTrust", "bootstrap"],
+      "properties": {
+        "osFamily": { "const": "ubuntu" },
+        "adminUser": { "const": "sysadmin" },
+        "sshAuthentication": { "const": "znvault-ssh-ca" },
+        "pkiTrust": { "const": "znvault-pki" },
+        "bootstrap": { "const": "bootstrap-vm" }
+      }
+    },
+    "guestAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "username",
+        "humanAuth",
+        "automationIdentity",
+        "automationPublicKeyFile",
+        "automationPublicKeyFingerprint",
+        "authorizedKeysFile",
+        "preserveProviderBreakGlass"
+      ],
+      "properties": {
+        "username": { "const": "sysadmin" },
+        "humanAuth": { "const": "znvault-ssh-ca" },
+        "automationIdentity": { "type": "string", "minLength": 1 },
+        "automationPublicKeyFile": { "type": "string", "minLength": 1 },
+        "automationPublicKeyFingerprint": {
+          "type": "string",
+          "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+        },
+        "authorizedKeysFile": { "const": ".ssh/authorized_keys" },
+        "preserveProviderBreakGlass": { "const": true }
+      }
+    },
+    "archon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerConnection",
+        "defaultIdentity",
+        "defaultConnectivityProfile",
+        "managed",
+        "healthCheck"
+      ],
+      "properties": {
+        "providerConnection": { "type": "string", "minLength": 1 },
+        "defaultIdentity": { "type": "string", "minLength": 1 },
+        "defaultConnectivityProfile": { "type": "string", "minLength": 1 },
+        "managed": { "const": true },
+        "healthCheck": { "const": "ssh" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredConnectivityStatus", "requiredGuestMarker"],
+      "properties": {
+        "requiredConnectivityStatus": { "const": "REACHABLE" },
+        "requiredGuestMarker": { "const": "/etc/bootstrap-done" }
+      }
+    }
+  }
+}
