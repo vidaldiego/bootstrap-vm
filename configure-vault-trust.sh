@@ -50,7 +50,7 @@ configure_ssh_ca() {
   echo "  Fetching CA public key from ${DIM}${ca_url}${RESET}"
 
   # Fetch CA public key
-  if ! curl -fsSL -k "${ca_url}" -o "${ca_file}"; then
+  if ! curl -fsSL "${ca_url}" -o "${ca_file}"; then
     warn "Failed to fetch SSH CA public key from vault"
     return 1
   fi
@@ -68,10 +68,26 @@ configure_ssh_ca() {
   # Create principals directory
   mkdir -p "${principals_dir}"
 
-  # Configure which principals can access sysadmin
-  echo "admin" > "${principals_dir}/sysadmin"
-  chmod 644 "${principals_dir}/sysadmin"
-  echo "  Configured principal 'admin' for user 'sysadmin'"
+  # Ensure the required principals are present for user 'sysadmin' WITHOUT
+  # wiping any principals added by a prior run / by operators. Append-if-missing.
+  local principals_file="${principals_dir}/sysadmin"
+  touch "${principals_file}"
+  chmod 644 "${principals_file}"
+  # Guard against a pre-existing file that lacks a trailing newline (e.g. an
+  # operator hand-edited it): appending would otherwise concatenate onto the
+  # last principal, corrupting it. Normalize to a newline-terminated file first.
+  if [ -s "${principals_file}" ] && [ -n "$(tail -c1 "${principals_file}")" ]; then
+    echo >> "${principals_file}"
+  fi
+  # shellcheck disable=SC2043  # deliberate single-element seam; more principals (e.g. archon-deploy) added in a later plan
+  for principal in admin; do
+    if ! grep -qxF "${principal}" "${principals_file}"; then
+      echo "${principal}" >> "${principals_file}"
+      echo "  Added principal '${principal}' for user 'sysadmin'"
+    else
+      echo "  Principal '${principal}' already present for user 'sysadmin'"
+    fi
+  done
 
   # Update sshd_config if not already configured
   if ! grep -q "TrustedUserCAKeys" /etc/ssh/sshd_config; then
@@ -106,7 +122,7 @@ configure_vault_pki_ca() {
   mkdir -p /usr/local/share/ca-certificates
 
   # Fetch root CA certificate
-  if ! curl -fsSL -k "${ca_url}" -o "${ca_file}"; then
+  if ! curl -fsSL "${ca_url}" -o "${ca_file}"; then
     warn "Failed to fetch PKI root CA from vault"
     return 1
   fi
